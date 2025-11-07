@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ghost of Yotei 2D</title>
+  <style>
+    canvas { background: #111; display: block; margin: auto; }
+    body { margin: 0; overflow: hidden; font-family: sans-serif; color: white; }
+    #ui {
+      position: absolute; top: 10px; left: 10px;
+      background: rgba(0,0,0,0.5); padding: 10px; border-radius: 8px;
+    }
+    .btn { margin: 5px; padding: 5px 10px; background: #222; color: #0ff; border: none; cursor: pointer; }
+    .btn:hover { background: #0ff; color: #000; }
+  </style>
+</head>
+<body>
+<canvas id="game" width="800" height="400"></canvas>
+<div id="ui">
+  <button class="btn" onclick="upgrade('katana')">Upgrade Katana</button>
+  <button class="btn" onclick="upgrade('armor')">Upgrade Armor</button>
+  <button class="btn" onclick="upgrade('resolve')">Upgrade Resolve</button>
+  <button class="btn" onclick="saveGame()">💾 Save</button>
+  <button class="btn" onclick="loadGame()">📂 Load</button>
+</div>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let keys = {}, frame = 0;
+document.addEventListener("keydown", e => keys[e.key] = true);
+document.addEventListener("keyup", e => keys[e.key] = false);
+
+let player = {
+  x: 100, y: 300, w: 40, h: 60,
+  vx: 0, vy: 0, grounded: false,
+  hp: 100, armor: 0, katanaLevel: 1,
+  kills: 0, resolve: 0, maxResolve: 6,
+  resolvePower: 1, superCooldown: 0,
+  stance: "Stone", coins: 0,
+  unlockedStances: ["Stone"],
+  stanceUpgrades: {
+    Stone: { damage: 1, speed: 1 },
+    Wind: { aoe: 0 },
+    Thunder: { counter: 0 },
+    Blossom: { combo: 0 },
+    Shadow: { stealth: 0 }
+  }
+};
+
+let enemies = [
+  { x: 600, y: 300, w: 40, h: 60, hp: 50, type: "grunt", dropped: false },
+  { x: 700, y: 280, w: 60, h: 80, hp: 150, type: "boss", name: "Oni", stunned: false, dropped: false, unlockedStance: false }
+];
+
+let drops = [];
+let slashes = [];
+let cutsceneText = "";
+let cutsceneFrame = 0;
+
+function loop() {
+  frame++;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  player.vy += 1;
+  player.x += (keys["ArrowRight"] ? 4 : 0) - (keys["ArrowLeft"] ? 4 : 0);
+  player.y += player.vy;
+  if (player.y > 300) { player.y = 300; player.vy = 0; player.grounded = true; }
+
+  if (keys[" "] && player.grounded) {
+    player.vy = -15;
+    player.grounded = false;
+  }
+
+  const stanceKeys = { "1": "Stone", "2": "Wind", "3": "Thunder", "4": "Blossom", "5": "Shadow" };
+  for (let key in stanceKeys) {
+    if (keys[key] && player.unlockedStances.includes(stanceKeys[key])) {
+      player.stance = stanceKeys[key];
+    }
+  }
+
+  if (keys["x"]) {
+    enemies.forEach(e => {
+      if (Math.abs(e.x - player.x) < 50 && e.hp > 0) {
+        let dmg = 10 * player.katanaLevel * (player.stanceUpgrades[player.stance]?.damage || 1);
+        e.hp -= dmg;
+      }
+    });
+  }
+
+  if (player.stance === "Shadow") {
+    enemies.forEach(e => {
+      if (Math.abs(e.x - player.x) < 30 && e.hp > 0) {
+        e.hp = 0;
+        player.kills++;
+      }
+    });
+  }
+
+  if (keys["s"] && player.resolve >= 3 && player.superCooldown === 0) {
+    let hitCount = 0;
+    enemies.forEach(e => {
+      if (e.hp > 0 && Math.abs(e.x - player.x) < 100 && hitCount < 5) {
+        if (e.type === "boss" && !e.stunned) return;
+        e.hp = 0;
+        hitCount++;
+        player.kills++;
+      }
+    });
+    slashes.push({ x: player.x, y: player.y, frame: 0 });
+    player.resolve -= 3;
+    player.superCooldown = 60;
+  }
+
+  if (player.superCooldown > 0) player.superCooldown--;
+
+  if (keys["h"] && player.resolve > 0) {
+    player.hp = Math.min(100, player.hp + 20 * player.resolvePower);
+    player.resolve--;
+  }
+
+  enemies.forEach(e => {
+    if (e.hp > 0) {
+      if (e.x > player.x) e.x -= 1;
+      else if (e.x < player.x) e.x += 1;
+      if (Math.abs(e.x - player.x) < 40) {
+        player.hp -= e.type === "boss" ? 2 : 1;
+      }
+      if (e.type === "boss" && e.hp < 100) {
+        e.stunned = true;
+      }
+    }
+
+    if (e.hp <= 0 && !e.dropped) {
+      e.dropped = true;
+      drops.push({ x: e.x, y: e.y, type: "coin" });
+      player.kills++;
+      if (e.type === "boss" && !e.unlockedStance) {
+        unlockStanceFromBoss(e.name);
+        e.unlockedStance = true;
+      }
+    }
+  });
+
+  drops.forEach(d => {
+    if (Math.abs(d.x - player.x) < 20) {
+      player.coins++;
+      d.collected = true;
+    }
+  });
+  drops = drops.filter(d => !d.collected);
+
+  player.resolve = Math.min(player.maxResolve, Math.floor(player.kills / 3));
+
+  ctx.fillStyle = "#0f0";
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+
+  enemies.forEach(e => {
+    ctx.fillStyle = e.type === "boss" ? "#f00" : "#ff0";
+    ctx.fillRect(e.x, e.y, e.w, e.h);
+    if (e.hp <= 0) ctx.fillText("Defeated", e.x, e.y - 10);
+    if (e.stunned) ctx.fillText("Stunned", e.x, e.y - 20);
+  });
+
+  drops.forEach(d => {
+    ctx.fillStyle = "#0ff";
+    ctx.fillRect(d.x, d.y, 10, 10);
+  });
+
+  slashes.forEach(s => {
+    ctx.strokeStyle = "cyan";
+    ctx.beginPath();
+    ctx.moveTo(s.x - 50 + s.frame, s.y);
+    ctx.lineTo(s.x + 50 - s.frame, s.y);
+    ctx.stroke();
+    s.frame++;
+  });
+  slashes = slashes.filter(s => s.frame < 20);
+
+  for (let i = 0; i < player.maxResolve; i++) {
+    ctx.beginPath();
+    ctx.arc(20 + i * 15, 20, 6, 0, Math.PI * 2);
+    ctx.fillStyle = i < player.resolve ? "#0ff" : "#333";
+    ctx.shadowColor = i < player.resolve ? "#0ff" : "transparent";
+    ctx.shadowBlur = i < player.resolve ? 10 : 0;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.fillText("Stance: " + player.stance, 20, 60);
+  ctx.fillText("Coins: " + player.coins, 20, 80);
+
+  if (cutsceneText && cutsceneFrame < 100) {
+    ctx.fillStyle = `rgba(0,0,0,${Math.min(1, cutsceneFrame / 50)})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#fff";
+    ctx.font = "24px sans-serif";
+    ctx.fillText(cutsceneText, 200, 200);
+    cutsceneFrame++;
+  }
+
+  requestAnimationFrame(loop);
+}
+loop();
+
+function upgrade(type) {
+  if
