@@ -198,9 +198,4 @@ function loop() {
     cutsceneFrame++;
   }
 
-  requestAnimationFrame(loop);
-}
-loop();
-
-function upgrade(type) {
-  if
+  requestAnimationFrame(loop
